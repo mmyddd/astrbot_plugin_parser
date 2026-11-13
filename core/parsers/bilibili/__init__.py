@@ -1,4 +1,5 @@
 import asyncio
+import re
 from re import Match
 from typing import ClassVar
 from urllib.parse import urlparse
@@ -28,6 +29,14 @@ except Exception as e:
     raise ModuleNotFoundError(
         f"curl_cffi is required by bilibili parser but not installed: {e}"
     ) from e
+
+
+_EM_TAG_RE = re.compile(r"</?em[^>]*>")
+
+
+def _normalize_title(text: str) -> str:
+    """去掉搜索高亮标签与空白，便于做标题全等比较。"""
+    return re.sub(r"\s+", "", _EM_TAG_RE.sub("", text or "")).strip()
 
 
 BLOCKED_PCDN_DOMAINS = (
@@ -158,6 +167,42 @@ class BilibiliParser(BaseParser):
         """解析图文动态信息"""
         opus_id = int(searched.group("opus_id"))
         return await self.parse_opus(opus_id)
+
+    async def search_video_by_title(self, title: str) -> str | None:
+        """按标题在 B 站反查视频链接。
+
+        QQ 官方卡片只下发摘要文本、没有跳转链接时，用卡片标题做一次检索；
+        只有命中的标题与卡片标题完全一致且唯一时才返回链接，避免误解析。
+
+        Args:
+            title: 卡片摘要中的标题。
+
+        Returns:
+            视频链接，无法唯一确定时返回 None。
+        """
+        from bilibili_api import search
+        from bilibili_api.search import SearchObjectType
+
+        keyword = _normalize_title(title)
+        if not keyword:
+            return None
+        try:
+            res = await search.search_by_type(
+                title, search_type=SearchObjectType.VIDEO, page=1
+            )
+        except Exception as e:
+            logger.warning(f"[bilibili] 卡片标题反查失败: {e}")
+            return None
+        items = (res or {}).get("result") or []
+        bvids = {
+            str(item.get("bvid"))
+            for item in items
+            if item.get("bvid")
+            and _normalize_title(str(item.get("title") or "")) == keyword
+        }
+        if len(bvids) != 1:
+            return None
+        return f"https://www.bilibili.com/video/{bvids.pop()}"
 
     async def parse_video(
         self,

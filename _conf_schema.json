@@ -29,6 +29,12 @@
         "type": "bool",
         "default": false
     },
+    "card_title_search": {
+        "description": "卡片标题反查链接",
+        "hint": "QQ 官方机器人的小程序/分享卡片经常只下发摘要文本、不含跳转链接。开启后会用卡片标题在 B 站按标题检索，仅当标题完全一致且唯一命中的才解析",
+        "type": "bool",
+        "default": true
+    },
     "debounce_interval": {
         "description": "防抖秒数",
         "hint": "防抖机制：同一个会话下，防抖时间内不解析那些已经解析过的链接。设为 0 表示不启用防抖机制",

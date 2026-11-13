@@ -26,6 +26,7 @@ from .core.utils import (
     describe_official_card,
     extract_json_url,
     extract_official_card_url,
+    parse_official_card_summary,
 )
 
 
@@ -179,8 +180,17 @@ class ParserPlugin(Star):
             # 保留原文本，避免同一条消息里的普通链接被卡片链接挤掉
             text = f"{text} {card_url}".strip() if text else card_url
         elif "[卡片消息]" in text:
-            # 卡片解析失败时打印结构摘要，便于按实际字段名补映射
-            logger.debug(f"官方卡片未取到链接: {describe_official_card(raw_message)}")
+            # QQ 官方卡片常常只下发摘要文本、不带跳转链接，这里退回按标题反查。
+            card_summary = parse_official_card_summary(text)
+            card_url = await self._lookup_card_url(card_summary)
+            if card_url:
+                logger.debug(f"卡片标题反查到链接: {card_url}")
+                text = f"{text} {card_url}".strip()
+            else:
+                # 兜底失败时打印结构摘要，便于按实际字段名补映射
+                logger.debug(
+                    f"官方卡片未取到链接: {describe_official_card(raw_message)} {card_summary}"
+                )
 
         # 引用解析
         reply_seg = next((seg for seg in chain if isinstance(seg, Reply)), None)
@@ -250,6 +260,34 @@ class ParserPlugin(Star):
 
         # 发送
         await self.sender.send_parse_result(event, parse_res)
+
+    async def _lookup_card_url(self, summary: dict[str, str]) -> str:
+        """用官方卡片摘要里的标题反查平台链接。
+
+        仅当标题唯一命中时才返回，宁可放弃也不误解析。
+
+        Args:
+            summary: parse_official_card_summary 的解析结果。
+
+        Returns:
+            反查到的链接，未开启或未命中时返回空字符串。
+        """
+        if not self.cfg.card_title_search:
+            return ""
+        title = summary.get("title") or summary.get("digest") or ""
+        if not title:
+            return ""
+        parser = next(
+            (p for p in self.parser_map.values() if isinstance(p, BilibiliParser)),
+            None,
+        )
+        if parser is None:
+            return ""
+        try:
+            return await parser.search_video_by_title(title) or ""
+        except Exception as e:
+            logger.warning(f"[卡片反查] 标题检索失败: {title}, error: {e}")
+            return ""
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("开启解析")

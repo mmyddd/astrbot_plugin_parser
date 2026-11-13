@@ -492,18 +492,34 @@ def _official_ark_candidates(ark: dict[str, Any]) -> list[str]:
 
 IMAGE_URL_SUFFIXES = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".ico")
 
+# 图片 CDN 的路径常以 /jpg1 这类无后缀形式结尾，需要单独识别。
+_IMAGE_PATH_RE = re.compile(r"/(?:jpg|jpeg|png|gif|webp|bmp|ico)\d*$", re.IGNORECASE)
+
 
 def _looks_like_image(url: str) -> bool:
     """判断 URL 是否指向图片资源（这类链接不是可解析的跳转目标）。"""
-    path = urlparse(url).path.lower()
-    return path.endswith(IMAGE_URL_SUFFIXES)
+    path = urlparse(url).path
+    if path.lower().endswith(IMAGE_URL_SUFFIXES):
+        return True
+    return bool(_IMAGE_PATH_RE.search(path))
+
+
+def _strip_noise_lines(text: str) -> str:
+    """去掉卡片摘要里的图标/封面行，避免把资源链接当成跳转链接。"""
+    kept = []
+    for line in text.splitlines():
+        key, sep, _ = line.partition(":")
+        if sep and key.strip().lower() in OFFICIAL_CARD_NOISE_KEYS:
+            continue
+        kept.append(line)
+    return "\n".join(kept)
 
 
 def _scan_ark_values(node: Any) -> list[str]:
     """兜底扫描：跳过图标/封面类字段与图片链接，收集卡片中的全部 URL。"""
     candidates: list[str] = []
     if isinstance(node, str):
-        cleaned = _clean_embedded_url(node)
+        cleaned = _clean_embedded_url(_strip_noise_lines(node))
         candidates.extend(
             match.group(0)
             for match in URL_RE.finditer(cleaned)
@@ -554,6 +570,40 @@ def extract_official_card_url(raw_message: Any) -> str | None:
         candidates.extend(_scan_ark_values(data))
 
     return _pick_preferred_url(candidates)
+
+
+OFFICIAL_CARD_SUMMARY_KEYS = {
+    "摘要": "digest",
+    "title": "title",
+    "source": "source",
+    "preview": "preview",
+    "source_logo": "source_logo",
+}
+
+
+def parse_official_card_summary(text: str) -> dict[str, str]:
+    """解析 QQ 官方卡片退化成纯文本后的摘要信息。
+
+    形如「[卡片消息] 小程序 / 摘要: ... / source: 哔哩哔哩 / title: ...」。
+    这类消息没有可用链接，但标题足以在对应平台上按标题反查。
+
+    Args:
+        text: 消息正文。
+
+    Returns:
+        含 kind/digest/title/source 等字段的字典，非卡片消息返回空字典。
+    """
+    if not text or "[卡片消息]" not in text:
+        return {}
+    info: dict[str, str] = {"kind": text.splitlines()[0].replace("[卡片消息]", "").strip()}
+    for line in text.splitlines()[1:]:
+        key, sep, value = line.partition(":")
+        if not sep:
+            continue
+        mapped = OFFICIAL_CARD_SUMMARY_KEYS.get(key.strip())
+        if mapped and value.strip():
+            info[mapped] = value.strip()
+    return info
 
 
 def describe_official_card(raw_message: Any) -> dict[str, Any]:
