@@ -22,7 +22,11 @@ from .core.download import Downloader
 from .core.parsers import BaseParser, BilibiliParser
 from .core.render import Renderer
 from .core.sender import MessageSender
-from .core.utils import extract_json_url, extract_official_card_url
+from .core.utils import (
+    describe_official_card,
+    extract_json_url,
+    extract_official_card_url,
+)
 
 
 class ParserPlugin(Star):
@@ -155,9 +159,8 @@ class ParserPlugin(Star):
             return
 
         # QQ 官方接口不会把卡片转成 Json 组件，链接只保留在原始负载的 ark_data 里
-        official_card_url = extract_official_card_url(
-            getattr(event.message_obj, "raw_message", None)
-        )
+        raw_message = getattr(event.message_obj, "raw_message", None)
+        official_card_url = extract_official_card_url(raw_message)
 
         # 卡片解析：扫描整条消息链，兼容 @ + JSON 卡片等组合消息。
         card_url = ""
@@ -175,6 +178,9 @@ class ParserPlugin(Star):
         if card_url:
             # 保留原文本，避免同一条消息里的普通链接被卡片链接挤掉
             text = f"{text} {card_url}".strip() if text else card_url
+        elif "[卡片消息]" in text:
+            # 卡片解析失败时打印结构摘要，便于按实际字段名补映射
+            logger.debug(f"官方卡片未取到链接: {describe_official_card(raw_message)}")
 
         # 引用解析
         reply_seg = next((seg for seg in chain if isinstance(seg, Reply)), None)

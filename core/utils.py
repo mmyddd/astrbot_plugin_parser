@@ -490,12 +490,25 @@ def _official_ark_candidates(ark: dict[str, Any]) -> list[str]:
     return candidates
 
 
+IMAGE_URL_SUFFIXES = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".ico")
+
+
+def _looks_like_image(url: str) -> bool:
+    """判断 URL 是否指向图片资源（这类链接不是可解析的跳转目标）。"""
+    path = urlparse(url).path.lower()
+    return path.endswith(IMAGE_URL_SUFFIXES)
+
+
 def _scan_ark_values(node: Any) -> list[str]:
-    """兜底扫描：跳过图标/封面类字段，收集卡片中的全部 URL。"""
+    """兜底扫描：跳过图标/封面类字段与图片链接，收集卡片中的全部 URL。"""
     candidates: list[str] = []
     if isinstance(node, str):
         cleaned = _clean_embedded_url(node)
-        candidates.extend(match.group(0) for match in URL_RE.finditer(cleaned))
+        candidates.extend(
+            match.group(0)
+            for match in URL_RE.finditer(cleaned)
+            if not _looks_like_image(match.group(0))
+        )
     elif isinstance(node, dict):
         for key, value in node.items():
             if key in OFFICIAL_CARD_NOISE_KEYS:
@@ -536,5 +549,34 @@ def extract_official_card_url(raw_message: Any) -> str | None:
         # 字段名不固定时，退化为遍历整个卡片节点，跳过图标/封面类字段。
         for ark in ark_nodes:
             candidates.extend(_scan_ark_values(ark))
+    if not candidates:
+        # 兜底：QQ 可能把跳转链接放在 ark_data 之外，整体再扫一遍原始负载。
+        candidates.extend(_scan_ark_values(data))
 
     return _pick_preferred_url(candidates)
+
+
+def describe_official_card(raw_message: Any) -> dict[str, Any]:
+    """产出官方卡片的结构摘要，便于排查链接取不到的情况。"""
+    if isinstance(raw_message, (dict, list)):
+        data: Any = raw_message
+    elif raw_message is None:
+        return {}
+    else:
+        data = getattr(raw_message, "raw_data", None)
+    if not isinstance(data, dict):
+        return {}
+    ark_nodes = list(_iter_official_ark(data))
+    summary: dict[str, Any] = {
+        "message_type": data.get("message_type"),
+        "raw_keys": sorted(str(key) for key in data),
+        "ark_count": len(ark_nodes),
+    }
+    if ark_nodes:
+        summary["ark_types"] = [node.get("ark_type") for node in ark_nodes]
+        summary["ark_fields"] = [
+            sorted(str(key) for key in (node.get("fields") or {}))
+            for node in ark_nodes
+            if isinstance(node.get("fields"), dict)
+        ]
+    return summary

@@ -124,3 +124,38 @@ def test_extract_official_card_url_handles_object_with_raw_data(utils_module):
 def test_extract_official_card_url_returns_none_without_raw_data(utils_module):
     assert utils_module.extract_official_card_url(SimpleNamespace()) is None
     assert utils_module.extract_official_card_url(None) is None
+
+def test_extract_official_card_url_ignores_image_links_in_fallback(utils_module):
+    raw_message = {
+        "message_type": 3,
+        "msg_elements": [
+            {"message_type": 3, "content": "https://example.com/a.jpg"},
+        ],
+    }
+    assert utils_module.extract_official_card_url(raw_message) is None
+
+
+def test_extract_official_card_url_falls_back_to_whole_payload(utils_module):
+    raw_message = {
+        "message_type": 3,
+        "content": "[卡片消息] 小程序",
+        "message_scene": {"ext": ["msg_idx=abc", "jump_url=https://b23.tv/xyz789"]},
+    }
+    assert utils_module.extract_official_card_url(raw_message) == "https://b23.tv/xyz789"
+
+
+def test_describe_official_card_reports_ark_structure(utils_module):
+    raw_message = {
+        "message_type": 3,
+        "ark_data": {"ark_type": "miniapp", "fields": {"title": "t", "jump_url": "https://x"}},
+    }
+    summary = utils_module.describe_official_card(raw_message)
+    assert summary["message_type"] == 3
+    assert summary["ark_count"] == 1
+    assert summary["ark_types"] == ["miniapp"]
+    assert summary["ark_fields"] == [["jump_url", "title"]]
+
+
+def test_describe_official_card_handles_missing_payload(utils_module):
+    assert utils_module.describe_official_card(None) == {}
+    assert utils_module.describe_official_card(SimpleNamespace()) == {}
